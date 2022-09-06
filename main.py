@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 import uuid
+import jwt
+from datetime import datetime, timedelta
+from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -9,6 +12,29 @@ app.config['AUTH_ALGORITHM'] = 'HS256'
 app.config["SQLALCHEMY_DATABASE_URI"] = 'sqlite:///todo.db'
 
 db = SQLAlchemy(app)
+
+
+def token_required(f):
+
+    @wraps(f)
+    def decorator(*args, **kwargs):
+        token = request.headers.get('x-access-token', None)
+        if token is None:
+            return make_response(
+                jsonify({"message": "Auth Token is Required"}), 403,
+                {'WWW-Authenticate': 'Basic realm="Login Required"'})
+        try:
+            data = jwt.decode(token, app.config["SECRET_KEY"],
+                              app.config["AUTH_ALGORITHM"])
+            current_user = User.query.filter_by(
+                public_id=data['public_id']).first()
+        except:
+            return make_response(
+                jsonify({"message": "Invalid Token Passed"}), 403,
+                {'WWW-Authenticate': 'Basic realm="Login Required"'})
+        return f(current_user, *args, **kwargs)
+
+    return decorator
 
 
 class User(db.Model):
@@ -27,7 +53,8 @@ class Todo(db.Model):
 
 
 @app.route("/users", methods=["GET"])
-def get_all_users():
+@token_required
+def get_all_users(current_user):
     users = User.query.all()
     output = []
     for user in users:
@@ -41,7 +68,8 @@ def get_all_users():
 
 
 @app.route("/user/<public_id>", methods=["GET"])
-def get_user_by_id(public_id):
+@token_required
+def get_user_by_id(current_user, public_id):
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return make_response('No User Found', 403)
@@ -70,7 +98,12 @@ def create_user():
 
 
 @app.route("/user/<public_id>", methods=["PUT"])
-def promote_user(public_id):
+@token_required
+def promote_user(current_user, public_id):
+    if not current_user.admin:
+        return make_response(
+            jsonify({"message": "Access Denied to perform this operation"}),
+            403)
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return make_response('No User Found', 403)
@@ -81,7 +114,12 @@ def promote_user(public_id):
 
 
 @app.route("/user/<public_id>", methods=["DELETE"])
-def delete_user(public_id):
+@token_required
+def delete_user(current_user, public_id):
+    if not current_user.admin:
+        return make_response(
+            jsonify({"message": "Access Denied to perform this operation"}),
+            403)
     user = User.query.filter_by(public_id=public_id).first()
     if not user:
         return make_response('No User Found', 403)
@@ -89,6 +127,35 @@ def delete_user(public_id):
     db.session.commit()
 
     return make_response(jsonify({'message': 'User Deleted'}), 200)
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    auth = request.authorization
+    if not auth or not auth.username or not auth.password:
+        return make_response(
+            jsonify({"message": "Username and Password Required"}), 401,
+            {'WWW-Authenticate': 'Basic realm="Login Required"'})
+    user = User.query.filter_by(name=auth.username).first()
+    if not user:
+        return make_response(
+            jsonify({"message": "User Not Found"}), 403,
+            {'WWW-Authenticate': 'Basic realm="Login Required"'})
+    if check_password_hash(user.password, auth.password):
+        # generate token
+        token = jwt.encode(
+            {
+                "public_id": user.public_id,
+                "exp": datetime.utcnow() + timedelta(minutes=30)
+            }, app.config["SECRET_KEY"], app.config['AUTH_ALGORITHM'])
+        return make_response(
+            jsonify({
+                "message": "Successfully Logged In",
+                "token": token
+            }), 200)
+    else:
+        return make_response(jsonify({"message": "Invalid Username/Password"}),
+                             403)
 
 
 @app.route("/")
