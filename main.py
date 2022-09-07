@@ -162,6 +162,95 @@ def login():
 def index():
     return "You are on index page"
 
+@app.route('/todo', methods=["GET"])
+@token_required
+def get_all_todo(current_user):
+    todos = Todo.query.filter_by(user_id=current_user.id)
+    output = []
+    for todo in todos:
+        todo_data = {}
+        todo_data["id"] = todo.id
+        todo_data["text"] = todo.text
+        todo_data["complete"] = todo.complete
+        output.append(todo_data)
+    return make_response(jsonify({"todos": output}), 200)
+
+@app.route('/todo/<todo_id>', methods=['GET'])
+@token_required
+def get_todo_by_id(current_user, todo_id):
+    todo = Todo.query.filter_by(id=todo_id).first()
+    if not todo:
+        return make_response(jsonify({"message": "No Todo Found"}), 403)
+    if current_user.id != todo.user_id:
+        return make_response(jsonify({
+            "message": "This ID does not belong to this user"
+        }), 401)
+    return make_response(jsonify({"text": todo.text, "complete": todo.complete, "id": todo.user_id}), 200)
+
+@app.route('/todo', methods=["POST"])
+@token_required
+def create_todo(current_user):
+    data = request.get_json()
+    new_todo = Todo(text=data['text'],
+                    complete=False,
+                    user_id=current_user.id)
+    db.session.add(new_todo)
+    db.session.commit()
+    return make_response(
+        jsonify({"message": "Todo Created"}),
+        200,
+    )
+
+@app.route('/toggle_todo/<todo_id>', methods=["GET"])
+@token_required
+def toggle_todo_completion(current_user, todo_id):
+    todo = Todo.query.filter_by(id=todo_id).first()
+    if not todo:
+        return make_response(jsonify({"message": "No Todo Found"}), 403)
+    if current_user.id != todo.user_id:
+        return make_response(jsonify({
+            "message": "This ID does not belong to this user"
+        }), 401)
+    todo.complete = not todo.complete
+    db.session.commit()
+    return make_response(jsonify({"message": "Todo Toggled"}), 200)
+
+@app.route('/todo/<todo_id>', methods=["DELETE"])
+@token_required
+def delete_todo(current_user, todo_id):
+    todo = Todo.query.filter_by(id=todo_id).first()
+    if not todo:
+        return make_response(jsonify({"message": "No Todo Found"}), 403)
+    if current_user.id != todo.user_id:
+        return make_response(jsonify({
+            "message": "This ID does not belong to this user"
+        }), 401)
+    db.session.delete(todo)
+    db.session.commit()
+    return make_response(jsonify({"message": "Todo Deleted"}), 200)
+
+@app.route('/todo/<todo_id>', methods=["PUT"])
+@token_required
+def update_todo(current_user, todo_id):
+    data = request.get_json()
+    todo = Todo.query.filter_by(id=todo_id).first()
+    if not todo:
+        return make_response(jsonify({"message": "No Todo Found"}), 403)
+    if current_user.id != todo.user_id:
+        return make_response(jsonify({
+            "message": "This ID does not belong to this user"
+        }), 401)
+    flag = False
+    if data.get("text") is not None:
+        todo.text = data["text"]
+        flag = True
+    if data.get("complete") is not None:
+        todo.complete = data["complete"]
+        flag = True
+    if flag:
+        db.session.commit()
+    return make_response(jsonify({"message": "Todo Updated"}), 200)
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True, port=81)
